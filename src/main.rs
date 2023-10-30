@@ -2,6 +2,8 @@ use std::env;
 use std::io::{read_to_string, BufReader, stdin};
 use std::fs::File;
 
+use color_print::cprintln;
+
 #[derive(Debug)]
 struct TransactionLog {
     transaction: String,
@@ -10,11 +12,12 @@ struct TransactionLog {
 
 impl  TransactionLog {
     fn show(&self) {
-        println!("Transaction is {}", self.transaction);
-        println!("Transaction Logs");
+        cprintln!("<yellow>Transaction is:</yellow>");
+        cprintln!("<cyan>{}</cyan>", self.transaction);
+        cprintln!("<yellow>Transaction Logs</yellow>");
         for line in &self.contents {
             if line.contains("dump_onode") || line.contains("dump_extent_map") {
-                println!("{:?}", line);
+                cprintln!("<magenta>{:?}</magenta>", line);
             }
         }
     }
@@ -27,13 +30,13 @@ fn transaction_bisect(transactions: &Vec<TransactionLog>) {
     let input = stdin();
 
     let mut buf = String::new();
-    while (l < r) {
-        let mut m: usize = (l + r) / 2;
+    while l < r {
+        let m: usize = (l + r) / 2;
         let mut bad_input = true;
         let transaction = &transactions[m];
         transaction.show();
-        println!("Please type \"bad\" if the transaction did bad stuff or \"good\" if everything looks normal");
-        while (bad_input) {
+        cprintln!("Please type <red>\"bad\"</red> if the transaction did bad stuff or <green>\"good\"</green> if everything looks normal");
+        while bad_input {
             buf.clear();
             input.read_line(&mut buf).unwrap();
             println!("{}",buf);
