@@ -57,8 +57,11 @@ impl TransactionLog {
     }
 }
 
-
-fn traceback_seen(target_oid: &String, transactions: &Vec<TransactionLog>, out: &mut HashSet<String>) {
+fn traceback_seen(
+    target_oid: &String,
+    transactions: &Vec<TransactionLog>,
+    out: &mut HashSet<String>,
+) {
     for log in transactions {
         if log.transaction.is_object() {
             let obj = log.transaction.as_object().unwrap();
@@ -146,14 +149,23 @@ fn explore(transactions: &Vec<TransactionLog>) {
     let mut filter_oids: bool = false;
 
     let mut filtered_transactions: Vec<TransactionLog> = transactions.clone();
-    let mut did_dump = false;
+    let mut skip_print = false;
+
+    let mut bisect_mode = false;
+    let mut start_bisect_mode = false;
+    let mut continue_bisect = false;
+    let mut m: usize = 0;
+    let mut l: usize = 0;
+    let mut r: usize = transactions.len();
 
     while run {
         if filter_oids {
             filtered_transactions = transactions
                 .iter()
                 .filter(|log| {
-                    println!("ops {:?}", log.transaction);
+                    if oid_filters.len() == 0 {
+                        return true;
+                    }
                     if log.transaction.is_object() {
                         let obj = log.transaction.as_object().unwrap();
                         let ops = obj.get("ops").unwrap().as_array().unwrap();
@@ -185,7 +197,6 @@ fn explore(transactions: &Vec<TransactionLog>) {
                                 }
                             }
                         }
-                        println!("ops {:?}", ops);
                     }
                     return false;
                 })
@@ -195,17 +206,27 @@ fn explore(transactions: &Vec<TransactionLog>) {
             filter_oids = false;
         }
 
-        // don't print again after dumping
-        if filtered_transactions.len() > 0  && !did_dump {
+        if start_bisect_mode {
+            l = 0;
+            r = filtered_transactions.len() - 1;
+            start_bisect_mode = false;
+        }
+        if bisect_mode && continue_bisect {
+            m = (l + r) / 2;
+            current = m;
+            continue_bisect = false;
+        }
+
+        if filtered_transactions.len() > 0 && !skip_print {
             let transaction = &filtered_transactions[current];
             transaction.show(&function_filters);
         }
 
-        if did_dump {
-            did_dump = false;
+        if skip_print {
+            skip_print = false;
         }
         cprintln!(
-            "Trasaction: {} / {}",
+            "<yellow>Trasaction: {} / {}</>",
             current + 1,
             filtered_transactions.len()
         );
@@ -214,25 +235,42 @@ fn explore(transactions: &Vec<TransactionLog>) {
             function_filters
         );
         cprintln!("<yellow>Oid filters are: {:?}</yellow>", oid_filters);
-        cprintln!("Commands:");
-        cprintln!("\t<bold>next [jump]</bold>\t jump is the amount of jumps you want to perform");
+        cprintln!("Explore commands:");
+        cprintln!("\t<bold>next [jump]</bold>\t jump is the amount of jumps you want to perform.");
         cprintln!("\t<bold>prev [jump]</bold>\t jump is the amount of jumps you want to perform");
-        cprintln!("\t<bold>filter [function,]*</bold>\t function filter of the log line");
+
+        println!();
+        cprintln!("Filtering commands: (might reset bisect mode) ");
+        cprintln!("\t<bold>filter [function,]*</bold>\t function filter of the log line. This won't reset bisect");
         cprintln!("\t<bold>oids [oid,]*</bold>\t oids to append to the oid filter");
         cprintln!("\t<bold>oids clear</bold>\t remove all oids");
         cprintln!("\t<bold>traceback</bold>\t trace oids back following clones, move, renames...");
+        cprintln!("\t<bold>dump</bold>\t dumps all filtered transactions");
+
+        println!();
+        cprintln!("Bisect commands:");
+        cprintln!("\t<red,bold>bad</>\t mark transaction as looks problematic");
+        cprintln!("\t<green,bold>good</>\t mark transaction as looks good");
+        cprintln!("\t<bold>bisect start</>");
+        cprintln!("\t<bold>bisect end</>");
+
         buf.clear();
         input.read_line(&mut buf).unwrap();
         println!("{}", buf);
         match buf.as_str() {
             "traceback\n" => {
                 let mut new_oid_filters = Vec::new();
-                oid_filters.get(0).and_then(|v| Some({
-                    new_oid_filters = traceback(&v, transactions);
-                    filter_oids = true;
-                    current = filtered_transactions.len() - 1;
-                }));
+                oid_filters.get(0).and_then(|v| {
+                    Some({
+                        new_oid_filters = traceback(&v, transactions);
+                        filter_oids = true;
+                        current = filtered_transactions.len() - 1;
+                    })
+                });
                 oid_filters = new_oid_filters;
+                if bisect_mode {
+                    start_bisect_mode = true;
+                }
             }
             "dump\n" => {
                 cprintln!("<yellow,bold>Dump start</>");
@@ -240,11 +278,43 @@ fn explore(transactions: &Vec<TransactionLog>) {
                     transaction.show(&function_filters);
                 }
                 cprintln!("<yellow,bold>Dump end</>");
-                did_dump = true;
+                skip_print = true;
             }
             "oids clear\n" => {
                 oid_filters.clear();
                 filter_oids = true;
+                if bisect_mode {
+                    start_bisect_mode = true;
+                }
+            },
+            "bisect end\n" => {
+                bisect_mode = false;
+                current = filtered_transactions.len() - 1;
+            }
+            "bisect start\n" => {
+                bisect_mode = true;
+                if bisect_mode {
+                    start_bisect_mode = true;
+                    continue_bisect = true;
+                }
+            }
+            "good\n" => {
+                if bisect_mode {
+                    l = m;
+                    continue_bisect = true;
+                } else {
+                    cprintln!("<red>Please start bisect mode</>");
+                    skip_print = true;
+                }
+            }
+            "bad\n" => {
+                if bisect_mode {
+                    r = m;
+                    continue_bisect = true;
+                } else {
+                    cprintln!("<red>Please start bisect mode</>");
+                    skip_print = true;
+                }
             }
             v => {
                 if v.starts_with("oids") {
@@ -255,12 +325,19 @@ fn explore(transactions: &Vec<TransactionLog>) {
                         oid_filters.append(&mut extra_oid_filters);
                         filter_oids = true;
                     }
+                    if bisect_mode {
+                        start_bisect_mode = true;
+                    }
                 } else if v.starts_with("filter") {
                     if let Some(function) = v.split(' ').nth(1) {
                         let filters = function.to_string().strip_suffix("\n").unwrap().to_string();
                         function_filters = filters.split(',').map(|v| v.to_string()).collect();
                     }
                 } else if v.starts_with("next") {
+                    if bisect_mode {
+                        cprintln!("Please end bisect mode to run this operation");
+                        continue;
+                    }
                     let mut jump: usize = 1;
                     if let Some(j) = v.split(' ').nth(1) {
                         let mut j = j.to_string();
@@ -274,6 +351,10 @@ fn explore(transactions: &Vec<TransactionLog>) {
                     }
                     current = (current + jump).min(filtered_transactions.len() - 1);
                 } else if v.starts_with("prev") {
+                    if bisect_mode {
+                        cprintln!("Please end bisect mode to run this operation");
+                        continue;
+                    }
                     let mut jump: usize = 1;
                     if let Some(j) = v.split(' ').nth(1) {
                         let mut j = j.to_string();
@@ -292,49 +373,10 @@ fn explore(transactions: &Vec<TransactionLog>) {
     }
 }
 
-fn biscect(transactions: &Vec<TransactionLog>) {
-    let mut l = 0;
-    let mut r = transactions.len();
-    let input = stdin();
-
-    let mut buf = String::new();
-    let mut function_filters: Vec<String> = Vec::new();
-    while l < r {
-        let m: usize = (l + r) / 2;
-        let transaction = &transactions[m];
-        transaction.show(&function_filters);
-        cprintln!("Trasaction: {} / {}", m + 1, transactions.len());
-        cprintln!("Commands:");
-        cprintln!("\t<red>bad</red>\t mark transaction as looks problematic");
-        cprintln!("\t<green>good</green>\t mark transaction as looks good");
-        cprintln!("\t<bold>filter [function,]*</bold>");
-        buf.clear();
-        input.read_line(&mut buf).unwrap();
-        println!("{}", buf);
-        match buf.as_str() {
-            "good\n" => {
-                l = m;
-            }
-            "bad\n" => {
-                r = m;
-            }
-            v => {
-                if v.starts_with("filter") {
-                    if let Some(function) = v.split(' ').nth(1) {
-                        let filters = function.to_string().strip_suffix("\n").unwrap().to_string();
-                        function_filters = filters.split(',').map(|v| v.to_string()).collect();
-                    }
-                }
-            }
-        }
-    }
-}
-
 fn main() {
     let args: Vec<String> = env::args().collect();
-    assert!(args.len() == 3);
-    let action: String = args[1].to_string();
-    let file: File = File::open(args[2].to_string()).unwrap();
+    assert!(args.len() == 2);
+    let file: File = File::open(args[1].to_string()).unwrap();
     let buf_reader = BufReader::new(file);
     let contents = read_to_string(buf_reader).unwrap();
     let mut current_transaction = TransactionLog {
@@ -401,17 +443,5 @@ fn main() {
     }
     // push last
     transactions.push(current_transaction);
-    match action.as_str() {
-        "explore" => {
-            explore(&transactions);
-        }
-        "bisect" => {
-            biscect(&transactions);
-        }
-        _ => {
-            println!("Unknown action");
-        }
-    }
-
-    dbg!(args);
+    explore(&transactions);
 }
