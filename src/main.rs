@@ -1,13 +1,12 @@
-use std::cmp::max;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use std::env;
 use std::fs::File;
 use std::io::{read_to_string, stdin, BufReader};
-use std::str::FromStr;
 
-use chrono::{DateTime, FixedOffset, Utc};
+
+use chrono::{DateTime, FixedOffset};
 use color_print::cprintln;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone)]
 struct LogLine {
@@ -19,9 +18,29 @@ struct LogLine {
     log: String,
 }
 #[derive(Debug, Clone)]
+struct TransactionOp {
+    op_name: String,
+    oid: String,
+
+    src_oid: String,
+    dst_oid: String,
+
+    new_oid: String,
+    old_oid: String,
+
+    offset: usize,
+    length: usize,
+
+    src_offset: usize,
+    dst_offset: usize,
+    len: usize,
+}
+
+#[derive(Debug, Clone)]
 struct TransactionLog {
     id: usize,
-    transaction: Value,
+    transaction: Vec<TransactionOp>,
+    raw_transaction: Value,
     contents: Vec<LogLine>,
 }
 
@@ -52,7 +71,7 @@ impl TransactionLog {
             }
         }
         cprintln!("<yellow>Transaction is:</yellow>");
-        let cute_transaction = serde_json::to_string_pretty(&self.transaction).unwrap();
+        let cute_transaction = serde_json::to_string_pretty(&self.raw_transaction).unwrap();
         cprintln!("<cyan>{}</cyan>", cute_transaction);
     }
 }
@@ -63,67 +82,61 @@ fn traceback_seen(
     out: &mut HashSet<String>,
 ) {
     for log in transactions {
-        if log.transaction.is_object() {
-            let obj = log.transaction.as_object().unwrap();
-            let ops = obj.get("ops").unwrap().as_array().unwrap();
-            for op in ops {
-                let op = op.as_object().unwrap();
-                if let Some(oid) = op.get("oid") {
-                    let oid = oid.as_str().unwrap().to_string();
-                    if target_oid.contains(&oid) {
+        for op in &log.transaction {
+            if op.oid != "" {
+                if target_oid.contains(&op.oid) {
+                    out.insert(op.oid.to_string());
+                }
+            }
+            if op.src_oid != "" {
+                let oid = op.src_oid.to_string();
+                if target_oid.contains(&oid) {
+                    if !out.contains(&oid) {
                         out.insert(oid);
                     }
-                }
-                if let Some(oid) = op.get("src_oid") {
-                    let oid = oid.as_str().unwrap().to_string();
-                    if target_oid.contains(&oid) {
-                        if !out.contains(&oid) {
-                            out.insert(oid);
-                        }
-                        let other = op.get("dst_oid").unwrap().as_str().unwrap().to_string();
-                        if !out.contains(&other) {
-                            out.insert(other.to_string());
-                            traceback_seen(&other, transactions, out);
-                        }
+                    let other = op.dst_oid.to_string();
+                    if !out.contains(&other) {
+                        out.insert(other.to_string());
+                        traceback_seen(&other, transactions, out);
                     }
                 }
-                if let Some(oid) = op.get("dst_oid") {
-                    let oid = oid.as_str().unwrap().to_string();
-                    if target_oid.contains(&oid) {
-                        if !out.contains(&oid) {
-                            out.insert(oid);
-                        }
-                        let other = op.get("src_oid").unwrap().as_str().unwrap().to_string();
-                        if !out.contains(&other) {
-                            out.insert(other.to_string());
-                            traceback_seen(&other, transactions, out);
-                        }
+            }
+            if op.dst_oid != "" {
+                let oid = op.src_oid.to_string();
+                if target_oid.contains(&oid) {
+                    if !out.contains(&oid) {
+                        out.insert(oid);
+                    }
+                    let other = op.src_oid.to_string();
+                    if !out.contains(&other) {
+                        out.insert(other.to_string());
+                        traceback_seen(&other, transactions, out);
                     }
                 }
-                if let Some(oid) = op.get("old_oid") {
-                    let oid = oid.as_str().unwrap().to_string();
-                    if target_oid.contains(&oid) {
-                        if !out.contains(&oid) {
-                            out.insert(oid);
-                        }
-                        let other = op.get("new_oid").unwrap().as_str().unwrap().to_string();
-                        if !out.contains(&other) {
-                            out.insert(other.to_string());
-                            traceback_seen(&other, transactions, out);
-                        }
+            }
+            if op.old_oid != "" {
+                let oid = op.old_oid.to_string();
+                if target_oid.contains(&oid) {
+                    if !out.contains(&oid) {
+                        out.insert(oid);
+                    }
+                    let other = op.new_oid.to_string();
+                    if !out.contains(&other) {
+                        out.insert(other.to_string());
+                        traceback_seen(&other, transactions, out);
                     }
                 }
-                if let Some(oid) = op.get("new_oid") {
-                    let oid = oid.as_str().unwrap().to_string();
-                    if target_oid.contains(&oid) {
-                        if !out.contains(&oid) {
-                            out.insert(oid);
-                        }
-                        let other = op.get("old_oid").unwrap().as_str().unwrap().to_string();
-                        if !out.contains(&other) {
-                            out.insert(other.to_string());
-                            traceback_seen(&other, transactions, out);
-                        }
+            }
+            if op.new_oid != "" {
+                let oid = op.new_oid.to_string();
+                if target_oid.contains(&oid) {
+                    if !out.contains(&oid) {
+                        out.insert(oid);
+                    }
+                    let other = op.old_oid.to_string();
+                    if !out.contains(&other) {
+                        out.insert(other.to_string());
+                        traceback_seen(&other, transactions, out);
                     }
                 }
             }
@@ -166,35 +179,30 @@ fn explore(transactions: &Vec<TransactionLog>) {
                     if oid_filters.len() == 0 {
                         return true;
                     }
-                    if log.transaction.is_object() {
-                        let obj = log.transaction.as_object().unwrap();
-                        let ops = obj.get("ops").unwrap().as_array().unwrap();
-                        for op in ops {
-                            let op = op.as_object().unwrap();
-                            if let Some(oid) = op.get("oid") {
-                                if oid_filters.contains(&oid.as_str().unwrap().to_string()) {
-                                    return true;
-                                }
+                    for op in &log.transaction {
+                        if op.oid != "" {
+                            if oid_filters.contains(&op.oid) {
+                                return true;
                             }
-                            if let Some(oid) = op.get("src_oid") {
-                                if oid_filters.contains(&oid.as_str().unwrap().to_string()) {
-                                    return true;
-                                }
+                        }
+                        if op.new_oid != "" {
+                            if oid_filters.contains(&op.new_oid) {
+                                return true;
                             }
-                            if let Some(oid) = op.get("dst_oid") {
-                                if oid_filters.contains(&oid.as_str().unwrap().to_string()) {
-                                    return true;
-                                }
+                        }
+                        if op.old_oid != "" {
+                            if oid_filters.contains(&op.old_oid) {
+                                return true;
                             }
-                            if let Some(oid) = op.get("old_oid") {
-                                if oid_filters.contains(&oid.as_str().unwrap().to_string()) {
-                                    return true;
-                                }
+                        }
+                        if op.src_oid != "" {
+                            if oid_filters.contains(&op.src_oid) {
+                                return true;
                             }
-                            if let Some(oid) = op.get("new_oid") {
-                                if oid_filters.contains(&oid.as_str().unwrap().to_string()) {
-                                    return true;
-                                }
+                        }
+                        if op.dst_oid != "" {
+                            if oid_filters.contains(&op.dst_oid) {
+                                return true;
                             }
                         }
                     }
@@ -286,7 +294,7 @@ fn explore(transactions: &Vec<TransactionLog>) {
                 if bisect_mode {
                     start_bisect_mode = true;
                 }
-            },
+            }
             "bisect end\n" => {
                 bisect_mode = false;
                 current = filtered_transactions.len() - 1;
@@ -381,7 +389,8 @@ fn main() {
     let contents = read_to_string(buf_reader).unwrap();
     let mut current_transaction = TransactionLog {
         id: 0,
-        transaction: Value::Null,
+        transaction: Vec::new(),
+        raw_transaction: Value::Null,
         contents: Vec::new(),
     };
     let mut transactions: Vec<TransactionLog> = Vec::new();
@@ -393,7 +402,8 @@ fn main() {
             transactions.push(current_transaction);
             current_transaction = TransactionLog {
                 id: id,
-                transaction: Value::Null,
+                transaction: Vec::new(),
+                raw_transaction: Value::Null,
                 contents: Vec::new(),
             };
             id += 1;
@@ -407,10 +417,86 @@ fn main() {
             transaction_start = false;
             current_transaction_str.push_str(line);
             current_transaction_str.push('\n');
-            println!("sdf {}", current_transaction_str);
-            println!("sdf");
-            current_transaction.transaction =
+            let transaction: Value =
                 serde_json::from_str(&current_transaction_str.as_str()).unwrap();
+            println!("transaction parse {}", current_transaction_str);
+            current_transaction.raw_transaction = transaction.clone();
+            if transaction.is_object() {
+                let obj = transaction.as_object().unwrap();
+                let ops = obj.get("ops").unwrap().as_array().unwrap();
+                for op in ops {
+                    let op = op.as_object().unwrap();
+
+                    let default_int = json!(0 as u64);
+                    let offset =
+                        op.get("offset").unwrap_or(&default_int).as_u64().unwrap() as usize;
+                    let dst_offset = op
+                        .get("dst_offset")
+                        .unwrap_or(&default_int)
+                        .as_u64()
+                        .unwrap() as usize;
+                    let src_offset = op
+                        .get("src_offset")
+                        .unwrap_or(&default_int)
+                        .as_u64()
+                        .unwrap() as usize;
+                    let length =
+                        op.get("length").unwrap_or(&default_int).as_u64().unwrap() as usize;
+                    let len = op.get("len").unwrap_or(&default_int).as_u64().unwrap() as usize;
+
+                    let default_string = json!("");
+                    let oid = op
+                        .get("oid")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let dst_oid = op
+                        .get("dst_oid")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let src_oid = op
+                        .get("src_oid")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let new_oid = op
+                        .get("new_oid")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let old_oid = op
+                        .get("old_oid")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let op_name = op
+                        .get("op_name")
+                        .unwrap_or(&default_string)
+                        .as_str()
+                        .unwrap()
+                        .to_string();
+                    let transaction_op = TransactionOp {
+                        op_name: op_name,
+                        oid: oid,
+                        src_oid: src_oid,
+                        dst_oid: dst_oid,
+                        new_oid: new_oid,
+                        old_oid: old_oid,
+                        offset: offset,
+                        length: length,
+                        src_offset: src_offset,
+                        dst_offset: dst_offset,
+                        len: len,
+                    };
+                    current_transaction.transaction.push(transaction_op);
+                }
+            }
         } else {
             if transaction_start {
                 current_transaction_str.push_str(line);
