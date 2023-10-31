@@ -1,14 +1,25 @@
+use std::cmp::max;
 use std::env;
 use std::fs::File;
 use std::io::{read_to_string, stdin, BufReader};
+use std::str::FromStr;
 
 use color_print::cprintln;
 use serde_json::Value;
+use chrono::{DateTime, Utc, FixedOffset};
 
+#[derive(Debug)]
+struct LogLine {
+    date: DateTime<FixedOffset>,
+    idk: String,
+    context: String, 
+    function: String, 
+    log: String
+}
 #[derive(Debug)]
 struct TransactionLog {
     transaction: Value,
-    contents: Vec<String>,
+    contents: Vec<LogLine>,
 }
 
 impl TransactionLog {
@@ -19,18 +30,83 @@ impl TransactionLog {
         cprintln!("<cyan>{}</cyan>", cute_transaction);
         cprintln!("<yellow>Transaction Logs</yellow>");
         for line in &self.contents {
-            let do_print = false;
-            for filter in function_filters {
-                if line.contains(filter) {
-                    cprintln!("<magenta>{:?}</magenta>", line);
-                    break;
+            if function_filters.len() > 0 {
+                for filter in function_filters {
+                    if line.function.contains(filter) {
+                        cprintln!("<cyan>{}</> <magenta>{}</> {}", line.context, line.function, line.log);
+                        break;
+                    }
                 }
+            } else {
+                cprintln!("<cyan>{}</> <magenta>{}</> {}", line.context, line.function, line.log);
             }
         }
     }
 }
 
-fn transaction_bisect(transactions: &Vec<TransactionLog>) {
+fn explore(transactions: &Vec<TransactionLog>) {
+    let mut run = true;
+    let mut current: usize = transactions.len() - 1;
+
+    let input = stdin();
+    let mut buf = String::new();
+    let mut function_filters: Vec<String> = Vec::new();
+
+    while run {
+        let transaction = &transactions[current];
+        transaction.show(&function_filters);
+        cprintln!("Commands:");
+        cprintln!("\t<bold>next [jump]</bold>\t jump is the amount of jumps you want to perform");
+        cprintln!("\t<bold>prev [jump]</bold>\t jump is the amount of jumps you want to perform");
+        cprintln!("\t<bold>filter [function,]*</bold>");
+        buf.clear();
+        input.read_line(&mut buf).unwrap();
+        println!("{}", buf);
+        match buf.as_str() {
+            "next\n" => {
+            }
+            "prev\n" => {
+            }
+            v => {
+                if v.starts_with("filter") {
+                    if let Some(function) = v.split(' ').nth(1) {
+                        let filters = function.to_string().strip_suffix("\n").unwrap().to_string();
+                        function_filters = filters.split(',').map(|v| v.to_string()).collect();
+                    }
+                } else if v.starts_with("next") {
+                    let mut jump: usize = 1;
+                    if let Some(j) = v.split(' ').nth(1) {
+                        let mut j = j.to_string();
+                        j.truncate(j.len() -1);
+                        match j.parse() {
+                            Ok(v) => {jump = v},
+                            Err(_) => {
+                                println!("invalid jump value, should an number");
+                            }
+                        }
+                    } 
+                    current = (current + jump).min(transactions.len() - 1);
+                } else if v.starts_with("prev") {
+                    let mut jump: usize = 1;
+                    if let Some(j) = v.split(' ').nth(1) {
+                        let mut j = j.to_string();
+                        j.truncate(j.len() - 1);
+                        match j.parse() {
+                            Ok(v) => {jump = v},
+                            Err(_) => {
+                                println!("invalid jump value, should an number");
+                            }
+                        }
+                    } 
+                    current = (current.saturating_sub(jump)).max(0);
+                }
+            }
+        }
+
+    }
+}
+
+fn biscect(transactions: &Vec<TransactionLog>) {
     let mut l = 0;
     let mut r = transactions.len();
     let input = stdin();
@@ -39,7 +115,6 @@ fn transaction_bisect(transactions: &Vec<TransactionLog>) {
     let mut function_filters: Vec<String> = Vec::new();
     while l < r {
         let m: usize = (l + r) / 2;
-        let mut bad_input = true;
         let transaction = &transactions[m];
         transaction.show(&function_filters);
         cprintln!("Commands:");
@@ -106,13 +181,24 @@ fn main() {
                 current_transaction_str.push_str(line);
                 current_transaction_str.push('\n');
             } else {
-                current_transaction.contents.push(line.to_string());
+                let mut split = line.split(' ');
+                if let Some(date) = split.next() {
+                    println!("{}", date);
+                    if let Ok(date_parsed) = DateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S%.3f%:z") {
+                        println!("{:?}", date_parsed);
+                        let idk = split.next().unwrap();
+                        let context = split.next().unwrap();
+                        let function = split.next().unwrap();
+                        let log = split.fold("".to_string(), |acc, v| acc + " " + v);
+                        current_transaction.contents.push(LogLine { date: date_parsed, idk: idk.to_string(), context: context.to_string(), function: function.to_string(), log: log });
+                    }
+                }
             }
         }
     }
     // push last
     transactions.push(current_transaction);
 
-    transaction_bisect(&transactions);
+    explore(&transactions);
     dbg!(args);
 }
