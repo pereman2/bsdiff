@@ -4,17 +4,18 @@ use std::fs::File;
 use std::io::{read_to_string, stdin, BufReader};
 use std::str::FromStr;
 
+use chrono::{DateTime, FixedOffset, Utc};
 use color_print::cprintln;
 use serde_json::Value;
-use chrono::{DateTime, Utc, FixedOffset};
 
 #[derive(Debug)]
 struct LogLine {
     date: DateTime<FixedOffset>,
     idk: String,
-    context: String, 
-    function: String, 
-    log: String
+    log_level: String,
+    context: String,
+    function: String,
+    log: String,
 }
 #[derive(Debug)]
 struct TransactionLog {
@@ -32,13 +33,24 @@ impl TransactionLog {
         for line in &self.contents {
             if function_filters.len() > 0 {
                 for filter in function_filters {
-                    if line.function.contains(filter) {
-                        cprintln!("<cyan>{}</> <magenta>{}</> {}", line.context, line.function, line.log);
+                    // a line might have context or not :()
+                    if line.function.contains(filter) || line.context.contains(filter) {
+                        cprintln!(
+                            "<cyan>{}</> <magenta>{}</> {}",
+                            line.context,
+                            line.function,
+                            line.log
+                        );
                         break;
                     }
                 }
             } else {
-                cprintln!("<cyan>{}</> <magenta>{}</> {}", line.context, line.function, line.log);
+                cprintln!(
+                    "<cyan>{}</> <magenta>{}</> {}",
+                    line.context,
+                    line.function,
+                    line.log
+                );
             }
         }
     }
@@ -55,7 +67,7 @@ fn explore(transactions: &Vec<TransactionLog>) {
     while run {
         let transaction = &transactions[current];
         transaction.show(&function_filters);
-        cprintln!("Trasaction: {} / {}", current+1, transactions.len());
+        cprintln!("Trasaction: {} / {}", current + 1, transactions.len());
         cprintln!("Commands:");
         cprintln!("\t<bold>next [jump]</bold>\t jump is the amount of jumps you want to perform");
         cprintln!("\t<bold>prev [jump]</bold>\t jump is the amount of jumps you want to perform");
@@ -64,10 +76,8 @@ fn explore(transactions: &Vec<TransactionLog>) {
         input.read_line(&mut buf).unwrap();
         println!("{}", buf);
         match buf.as_str() {
-            "next\n" => {
-            }
-            "prev\n" => {
-            }
+            "next\n" => {}
+            "prev\n" => {}
             v => {
                 if v.starts_with("filter") {
                     if let Some(function) = v.split(' ').nth(1) {
@@ -78,14 +88,14 @@ fn explore(transactions: &Vec<TransactionLog>) {
                     let mut jump: usize = 1;
                     if let Some(j) = v.split(' ').nth(1) {
                         let mut j = j.to_string();
-                        j.truncate(j.len() -1);
+                        j.truncate(j.len() - 1);
                         match j.parse() {
-                            Ok(v) => {jump = v},
+                            Ok(v) => jump = v,
                             Err(_) => {
                                 println!("invalid jump value, should an number");
                             }
                         }
-                    } 
+                    }
                     current = (current + jump).min(transactions.len() - 1);
                 } else if v.starts_with("prev") {
                     let mut jump: usize = 1;
@@ -93,17 +103,16 @@ fn explore(transactions: &Vec<TransactionLog>) {
                         let mut j = j.to_string();
                         j.truncate(j.len() - 1);
                         match j.parse() {
-                            Ok(v) => {jump = v},
+                            Ok(v) => jump = v,
                             Err(_) => {
                                 println!("invalid jump value, should an number");
                             }
                         }
-                    } 
+                    }
                     current = (current.saturating_sub(jump)).max(0);
                 }
             }
         }
-
     }
 }
 
@@ -118,7 +127,7 @@ fn biscect(transactions: &Vec<TransactionLog>) {
         let m: usize = (l + r) / 2;
         let transaction = &transactions[m];
         transaction.show(&function_filters);
-        cprintln!("Trasaction: {} / {}", m+1, transactions.len());
+        cprintln!("Trasaction: {} / {}", m + 1, transactions.len());
         cprintln!("Commands:");
         cprintln!("\t<red>bad</red>\t mark transaction as looks problematic");
         cprintln!("\t<green>good</green>\t mark transaction as looks good");
@@ -188,13 +197,23 @@ fn main() {
                 let mut split = line.split(' ');
                 if let Some(date) = split.next() {
                     println!("{}", date);
-                    if let Ok(date_parsed) = DateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S%.3f%:z") {
+                    if let Ok(date_parsed) =
+                        DateTime::parse_from_str(date, "%Y-%m-%dT%H:%M:%S%.3f%:z")
+                    {
                         println!("{:?}", date_parsed);
                         let idk = split.next().unwrap();
+                        let log_level = split.next().unwrap();
                         let context = split.next().unwrap();
                         let function = split.next().unwrap();
                         let log = split.fold("".to_string(), |acc, v| acc + " " + v);
-                        current_transaction.contents.push(LogLine { date: date_parsed, idk: idk.to_string(), context: context.to_string(), function: function.to_string(), log: log });
+                        current_transaction.contents.push(LogLine {
+                            date: date_parsed,
+                            idk: idk.to_string(),
+                            log_level: log_level.to_string(),
+                            context: context.to_string(),
+                            function: function.to_string(),
+                            log: log,
+                        });
                     }
                 }
             }
@@ -205,11 +224,10 @@ fn main() {
     match action.as_str() {
         "explore" => {
             explore(&transactions);
-
-        },
+        }
         "bisect" => {
             biscect(&transactions);
-        },
+        }
         _ => {
             println!("Unknown action");
         }
