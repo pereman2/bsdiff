@@ -55,6 +55,7 @@ fn explore(transactions: &Vec<TransactionLog>) {
     while run {
         let transaction = &transactions[current];
         transaction.show(&function_filters);
+        cprintln!("Trasaction: {} / {}", current+1, transactions.len());
         cprintln!("Commands:");
         cprintln!("\t<bold>next [jump]</bold>\t jump is the amount of jumps you want to perform");
         cprintln!("\t<bold>prev [jump]</bold>\t jump is the amount of jumps you want to perform");
@@ -145,7 +146,9 @@ fn biscect(transactions: &Vec<TransactionLog>) {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let file: File = File::open(args[1].to_string()).unwrap();
+    assert!(args.len() == 3);
+    let action: String = args[1].to_string();
+    let file: File = File::open(args[2].to_string()).unwrap();
     let buf_reader = BufReader::new(file);
     let contents = read_to_string(buf_reader).unwrap();
     let mut current_transaction = TransactionLog {
@@ -198,7 +201,18 @@ fn main() {
     }
     // push last
     transactions.push(current_transaction);
+    match action.as_str() {
+        "explore" => {
+            explore(&transactions);
 
-    explore(&transactions);
+        },
+        "bisect" => {
+            biscect(&transactions);
+        },
+        _ => {
+            println!("Unknown action");
+        }
+    }
+
     dbg!(args);
 }
