@@ -118,6 +118,7 @@ fn biscect(transactions: &Vec<TransactionLog>) {
         let m: usize = (l + r) / 2;
         let transaction = &transactions[m];
         transaction.show(&function_filters);
+        cprintln!("Trasaction: {} / {}", m+1, transactions.len());
         cprintln!("Commands:");
         cprintln!("\t<red>bad</red>\t mark transaction as looks problematic");
         cprintln!("\t<green>good</green>\t mark transaction as looks good");
