@@ -1,5 +1,6 @@
 # Bluestore's log biscect tool 
 
+only works on bluestore tests and with log level 30 for now.
 ## Commands
 `cargo run explore example.log`
 
